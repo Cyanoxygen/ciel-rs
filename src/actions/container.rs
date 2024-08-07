@@ -13,13 +13,13 @@ use std::{
 use crate::{
     actions::ensure_host_sanity,
     common::*,
-    config, error, info,
+    config::{self, CielConfig}, error, info,
     machine::{self, get_container_ns_name, inspect_instance, spawn_container},
     network::download_file_progress,
     overlayfs, warn,
 };
 
-use super::{for_each_instance, UPDATE_SCRIPT};
+use super::for_each_instance;
 
 /// Get the branch name of the workspace TREE repository
 #[inline]
@@ -376,11 +376,16 @@ pub fn remove_instance(instance: &str) -> Result<()> {
 }
 
 /// Update AOSC OS in the container/instance
-pub fn update_os() -> Result<()> {
+pub fn update_os(config: Option<CielConfig>) -> Result<()> {
     info!("Updating base OS...");
     let instance = format!("update-{:x}", random::<u32>());
     add_instance(&instance)?;
-    let status = run_in_container(&instance, &["/bin/bash", "-ec", UPDATE_SCRIPT])?;
+    let update_script = match config {
+	Some(c) => c.update_command,
+	None => CielConfig::default().update_command
+    };
+    let update_script = update_script.as_str();
+    let status = run_in_container(&instance, &["/bin/bash", "-ec", update_script])?;
     if status != 0 {
         return Err(anyhow!("Failed to update OS: {}", status));
     }

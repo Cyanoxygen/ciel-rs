@@ -1,7 +1,8 @@
 //! This module contains configuration files related APIs
 
+use crate::actions::{APT_UPDATE_SCRIPT, OMA_UPDATE_SCRIPT};
 use crate::common::CURRENT_CIEL_VERSION;
-use crate::info;
+use crate::{info, warn};
 use anyhow::{anyhow, Result};
 use console::{style, user_attended};
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input};
@@ -12,7 +13,7 @@ use std::{
     io::{Read, Write},
 };
 
-const DEFAULT_CONFIG_LOCATION: &str = ".ciel/data/config.toml";
+pub const DEFAULT_CONFIG_LOCATION: &str = ".ciel/data/config.toml";
 const DEFAULT_APT_SOURCE: &str = "deb https://repo.aosc.io/debs/ stable main";
 const DEFAULT_AB3_CONFIG_FILE: &str = "ab3cfg.sh";
 const DEFAULT_AB4_CONFIG_LOCATION: &str = "etc/autobuild/ab4cfg.sh";
@@ -34,6 +35,8 @@ pub struct CielConfig {
     pub sep_mount: bool,
     #[serde(rename = "volatile-mount", default)]
     pub volatile_mount: bool,
+    #[serde(default = "deserialize_default_update_command")]
+    pub update_command: String,
 }
 
 impl CielConfig {
@@ -58,6 +61,7 @@ impl Default for CielConfig {
             extra_options: Vec::new(),
             sep_mount: true,
             volatile_mount: false,
+	    update_command: OMA_UPDATE_SCRIPT.to_string(),
         }
     }
 }
@@ -137,6 +141,16 @@ fn get_default_editor() -> OsString {
     "nano".into()
 }
 
+fn deserialize_default_update_command() -> String {
+	// If this function is called, then `update_command` field is missing
+	// in the config file. We notify the user about this change, tell
+	// them to run `ciel config` manually.
+	warn!("Ciel now prefer oma as the default package manager.");
+	warn!("You can now tell Ciel whether to use oma to update the container.");
+	warn!("Please run `ciel config -g` to dismiss this message.");
+    String::from(OMA_UPDATE_SCRIPT)
+}
+
 /// Shows a series of prompts to let the user select the configurations
 pub fn ask_for_config(config: Option<CielConfig>) -> Result<CielConfig> {
     let mut config = config.unwrap_or_default();
@@ -185,6 +199,15 @@ pub fn ask_for_config(config: Option<CielConfig>) -> Result<CielConfig> {
         .with_prompt("Use volatile mode for filesystem operations")
         .default(config.volatile_mount)
         .interact()?;
+    let pm = Confirm::with_theme(&theme)
+    	.with_prompt("Use oma as the default package manager instead of APT")
+	.default(true)
+	.interact()?;
+    config.update_command = match pm {
+	true => String::from(OMA_UPDATE_SCRIPT),
+	false => String::from(APT_UPDATE_SCRIPT),
+    };
+    info!("You can edit the config file to use other package managers and commands.");
 
     Ok(config)
 }

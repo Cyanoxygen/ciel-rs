@@ -13,6 +13,7 @@ mod repo;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::ArgMatches;
+use config::{CielConfig, DEFAULT_CONFIG_LOCATION};
 use console::{style, user_attended};
 use dotenvy::dotenv;
 use std::process;
@@ -114,9 +115,11 @@ fn main() -> Result<()> {
     std::env::set_current_dir(&directory).unwrap();
     // get subcommands from command line parser
     let subcmd = args.subcommand();
+
+    let mut config: Option<CielConfig> = None;
     // check if the workspace exists, except when the command is `init` or `new`
     match subcmd {
-        Some(("init", _)) | Some(("new", _)) | Some(("version", _)) => (),
+        Some(("init", _)) | Some(("new", _)) | Some(("farewell", _)) | Some(("version", _)) => (),
         _ if !Path::new("./.ciel").is_dir() => {
             if directory == Path::new(".") {
                 directory =
@@ -126,6 +129,12 @@ fn main() -> Result<()> {
                     style(directory.canonicalize()?.display()).cyan()
                 );
                 std::env::set_current_dir(&directory).unwrap();
+		config = if let Ok(c) = CielConfig::load_config(DEFAULT_CONFIG_LOCATION) {
+			Some(c)
+		} else {
+			warn!("Config file is not found. Using default configuration.");
+			Some(CielConfig::default())
+		}
             } else {
                 error!("This directory does not look like a Ciel workspace");
                 process::exit(1);
@@ -218,7 +227,7 @@ fn main() -> Result<()> {
             });
         }
         ("update-os", _) => {
-            print_error!({ actions::update_os() });
+            print_error!({ actions::update_os(config) });
         }
         ("config", args) => {
             if args.get_flag("g") {
@@ -295,7 +304,7 @@ fn main() -> Result<()> {
             if let Some(cont) = args.get_one::<String>("CONTINUE") {
                 state = Some(actions::load_build_checkpoint(cont)?);
                 let empty: Vec<&str> = Vec::new();
-                let status = actions::package_build(&instance, empty.into_iter(), state, settings)?;
+                let status = actions::package_build(config, &instance, empty.into_iter(), state, settings)?;
                 println!("\x07"); // bell character
                 process::exit(status);
             }
@@ -308,7 +317,7 @@ fn main() -> Result<()> {
             if args.contains_id("SELECT") {
                 let start_package = args.get_one::<String>("SELECT");
                 let status =
-                    actions::packages_stage_select(&instance, packages, settings, start_package)?;
+                    actions::packages_stage_select(config, &instance, packages, settings, start_package)?;
                 process::exit(status);
             }
             if args.get_flag("FETCH") {
@@ -316,7 +325,7 @@ fn main() -> Result<()> {
                 let status = actions::package_fetch(&instance, &packages)?;
                 process::exit(status);
             }
-            let status = actions::package_build(&instance, packages, state, settings)?;
+            let status = actions::package_build(config, &instance, packages, state, settings)?;
             println!("\x07"); // bell character
             process::exit(status);
         }

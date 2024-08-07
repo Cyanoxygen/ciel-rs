@@ -12,12 +12,9 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::{common::create_spinner, config, error, info, repo, warn};
+use crate::{common::create_spinner, config::{self, CielConfig}, error, info, repo, warn};
 
-use super::{
-    container::{get_output_directory, mount_fs, rollback_container, run_in_container},
-    UPDATE_SCRIPT,
-};
+use super::container::{get_output_directory, mount_fs, rollback_container, run_in_container};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BuildCheckPoint {
@@ -148,6 +145,7 @@ impl<T> Drop for RepoMonitorGuard<T> {
 
 #[inline]
 fn package_build_inner<P: AsRef<Path>>(
+    config: Option<CielConfig>,
     packages: &[String],
     instance: &str,
     root: P,
@@ -161,6 +159,11 @@ fn package_build_inner<P: AsRef<Path>>(
     let root_path = root.as_ref().to_path_buf();
     let refresh_monitor = thread::spawn(move || repo::start_monitor(&root_path, rx));
     let guard = RepoMonitorGuard::new(refresh_monitor, tx);
+    let update_script = match config {
+	Some(c) => c.update_command,
+	None => CielConfig::default().update_command,
+    };
+    let update_script = update_script.as_str();
     for (index, package) in packages.iter().enumerate() {
         // set terminal title, \r is for hiding the message if the terminal does not support the sequence
         eprint!(
@@ -178,7 +181,7 @@ fn package_build_inner<P: AsRef<Path>>(
         repo::init_repo(root.as_ref(), Path::new(instance))?;
         let mut status = -1;
         for i in 1..=5 {
-            status = run_in_container(instance, &["/bin/bash", "-ec", UPDATE_SCRIPT]).unwrap_or(-1);
+            status = run_in_container(instance, &["/bin/bash", "-ec", update_script]).unwrap_or(-1);
             if status == 0 {
                 break;
             } else {
@@ -207,6 +210,7 @@ fn package_build_inner<P: AsRef<Path>>(
 }
 
 pub fn packages_stage_select<S: AsRef<str>, K: Clone + ExactSizeIterator<Item = S>>(
+    config: Option<CielConfig>,
     instance: &str,
     packages: K,
     settings: BuildSettings,
@@ -235,6 +239,7 @@ pub fn packages_stage_select<S: AsRef<str>, K: Clone + ExactSizeIterator<Item = 
     let empty: Vec<&str> = Vec::new();
 
     package_build(
+	config,
         instance,
         empty.into_iter(),
         Some(BuildCheckPoint {
@@ -270,6 +275,7 @@ pub fn package_fetch<S: AsRef<str>>(instance: &str, packages: &[S]) -> Result<i3
 
 /// Build packages in the container
 pub fn package_build<S: AsRef<str>, K: Clone + ExactSizeIterator<Item = S>>(
+    config: Option<CielConfig>,
     instance: &str,
     packages: K,
     state: Option<BuildCheckPoint>,
@@ -320,7 +326,7 @@ pub fn package_build<S: AsRef<str>, K: Clone + ExactSizeIterator<Item = S>>(
     let root = std::env::current_dir()?.join(output_dir);
     let total = packages.len();
     let start = Instant::now();
-    let (exit_status, progress) = package_build_inner(&packages, instance, root)?;
+    let (exit_status, progress) = package_build_inner(config, &packages, instance, root)?;
     if exit_status != 0 {
         let checkpoint = BuildCheckPoint {
             packages,
